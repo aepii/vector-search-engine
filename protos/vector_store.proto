@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+service VectorStore {
+    // Client sends ID and text; Server returns status
+    rpc Upsert(UpsertRequest) returns (UpsertResponse);
+    
+    // Client sends query string; Server returns top_k strings
+    rpc Search(SearchRequest) returns (SearchResponse);
+}
+
+message UpsertRequest {
+    int32 id = 1;
+    string text = 2;
+}
+
+message UpsertResponse {
+    string upsert_status = 1;
+}
+
+message SearchRequest {
+    string query_text = 1;
+    int32 top_k = 2;
+}
+
+message SearchResponse {
+    repeated string results = 1;
+}
