@@ -29,8 +29,9 @@ pip install -r requirements.txt
 ```
 
 ## Execution
-To run the demo script and verify the vector search:
+To run the demo script and verify the vector search run the following commands into seperate terminals:
 
 ```bash
-python src/main.py
+python src/server.py
+python src/client.py
 ```
