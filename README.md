@@ -1,6 +1,6 @@
 # Distributed Crash-Fault-Tolerant Vector Search Engine
 
-A *high-availability distributed system* for storing and querying [vector embeddings](https://www.pinecone.io/learn/vector-database/). This project implements a consistent, replicated vector index using the [**Raft Consensus Algorithm**](https://raft.github.io/raft.pdf).
+A *distributed system* for storing and querying [vector embeddings](https://www.pinecone.io/learn/vector-database/). This project implements a consistent, replicated vector index using the [**Raft Consensus Algorithm**](https://raft.github.io/raft.pdf).
 
 ## Setup and Installation
 ### 1. Clone the repository:
@@ -28,10 +28,30 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Execution
-To run the demo script and verify the vector search run the following commands into seperate terminals:
-
+### 4. Compile the Protobuf Definitions
+ 
 ```bash
+python -m grpc_tools.protoc \
+    -I protos \
+    --python_out=src \
+    --grpc_python_out=src \
+    protos/vector_store.proto
+```
+
+### 5. Configure Environment
+ 
+Copy `.env.example` to `.env`:
+ 
+```bash
+cp .env.example .env
+```
+
+## Running Locally
+Open separate terminals for each component:
+```bash
+# Terminal 1 — Server
 python src/server.py
+ 
+# Terminal 2 — Client
 python src/client.py
 ```
