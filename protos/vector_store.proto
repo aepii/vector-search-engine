@@ -2,33 +2,46 @@ syntax = "proto3";
 
 service VectorStore {
     // Client sends ID and text; Server returns status
-    rpc Upsert(UpsertRequest) returns (UpsertResponse);
-    
+  rpc Upsert(UpsertRequest) returns (UpsertResponse);
+    // Client sends batch of items; Server returns statuses
+  rpc UpsertBatch(UpsertBatchRequest) returns (UpsertBatchResponse);
     // Client sends query string; Server returns top_k strings
-    rpc Search(SearchRequest) returns (SearchResponse);
+  rpc Search(SearchRequest) returns (SearchResponse);
 }
 
 // -- Upsert --
+message UpsertItem {
+  int64  id   = 1;
+  string text = 2;
+}
+
 message UpsertRequest {
-    int32 id = 1;
-    string text = 2;
+  UpsertItem item = 1;
 }
 
 message UpsertResponse {
-    string upsert_status = 1;
+  string status = 1;
+}
+
+message UpsertBatchRequest {
+  repeated UpsertItem items = 1;
+}
+
+message UpsertBatchResponse {
+  repeated string statuses = 1;
 }
 
 // -- Search --
 message SearchRequest {
-    string query_text = 1;
-    int32 top_k = 2;
+  string query_text = 1;
+  int32  top_k      = 2;
 }
 
 message SearchResponse {
-    repeated SearchResult results = 1;
+  repeated SearchResult results = 1;
 }
 
 message SearchResult {
-    string text = 1;
-    float score = 2;
+  string text  = 1;
+  float  score = 2;
 }

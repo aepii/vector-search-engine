@@ -24,6 +24,18 @@ class VectorService:
         query_embedding = self.embedding_model.encode(text)
         self.vector_store.upsert(item_id, text, query_embedding)
 
+    def add_items_batch(self, items: list[tuple[int, str]]) -> None:
+        """
+        Encodes batch of items and stores it in the vector store.
+
+        Args:
+            items: A list of item where each item has an item_id and text.
+        """
+        texts = [text for _, text in items]
+        query_embeddings = self.embedding_model.encode(texts)
+        for (item_id, text), query_embedding in zip(items, query_embeddings):
+            self.vector_store.upsert(item_id, text, query_embedding)
+
     def search(self, text: str, top_k: int = 3) -> list[tuple[str, float]]:
         """
         Performs a semantic search against the stored vectors.

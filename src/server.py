@@ -4,6 +4,10 @@ from concurrent import futures
 import vector_store_pb2, vector_store_pb2_grpc
 from classes.vector_service import VectorService
 from dotenv import load_dotenv
+import torch
+
+torch.set_num_threads(4)
+torch.set_num_interop_threads(1)
 
 load_dotenv()
 
@@ -20,10 +24,18 @@ class VectorStoreServicer(vector_store_pb2_grpc.VectorStoreServicer):
         """
         Inserts or updates an item in the vector store.
         """
-        self.service.add_item(request.id, request.text)
-        return vector_store_pb2.UpsertResponse(
-            upsert_status=f"ID {request.id} indexed."
-        )
+        item = request.item
+        self.service.add_item(item.id, item.text)
+        return vector_store_pb2.UpsertResponse(status=f"ID {request.id} indexed.")
+
+    def UpsertBatch(self, request, context):
+        """
+        Inserts or updates a batch of items in the vector store.
+        """
+        items = [(item.id, item.text) for item in request.items]
+        self.service.add_items_batch(items)
+        statuses = [f"ID {item.id} indexed." for item in request.items]
+        return vector_store_pb2.UpsertBatchResponse(statuses=statuses)
 
     def Search(self, request, context):
         """
@@ -39,7 +51,7 @@ class VectorStoreServicer(vector_store_pb2_grpc.VectorStoreServicer):
 
 
 def serve():
-    server = grpc.server(futures.ThreadPoolExecutor())
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
     vector_store_pb2_grpc.add_VectorStoreServicer_to_server(
         VectorStoreServicer(), server
     )

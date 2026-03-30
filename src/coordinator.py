@@ -29,15 +29,33 @@ class CoordinatorServicer(vector_store_pb2_grpc.VectorStoreServicer):
         return item_id % self.num_shards
 
     def Upsert(self, request, context):
-        shard_index = self._route(request.id)
+        item = request.item
+        shard_index = self._route(item.id)
         print(
             f"Upsert ID {request.id} - shard {shard_index} ({self.shard_hosts[shard_index]})"
         )
         response = self.stubs[shard_index].Upsert(request)
 
         return vector_store_pb2.UpsertResponse(
-            upsert_status=f"[shard {shard_index}] {response.upsert_status}"
+            status=f"[shard {shard_index}] {response.upsert_status}"
         )
+
+    def UpsertBatch(self, request, context):
+        shard_batches = {i: [] for i in range(self.num_shards)}
+        for item in request.items:
+            shard_index = self._route(item.id)
+            shard_batches[shard_index].append(item)
+
+        responses = []
+        for shard_index, shard_batch in shard_batches.items():
+            if not shard_batch:
+                continue
+
+            batch_request = vector_store_pb2.UpsertBatchRequest(items=shard_batch)
+            response = self.stubs[shard_index].UpsertBatch(batch_request)
+            responses.extend(response.statuses)
+
+        return vector_store_pb2.UpsertBatchResponse(statuses=responses)
 
     def Search(self, request, context):
         def query_shard(stub, shard_index):
@@ -62,7 +80,7 @@ class CoordinatorServicer(vector_store_pb2_grpc.VectorStoreServicer):
 
 
 def serve():
-    server = grpc.server(futures.ThreadPoolExecutor())
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=8))
     vector_store_pb2_grpc.add_VectorStoreServicer_to_server(
         CoordinatorServicer(SHARD_HOSTS), server
     )

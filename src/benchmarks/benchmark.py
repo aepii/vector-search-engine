@@ -2,110 +2,100 @@ import time
 import sys
 import os
 from client.vector_store_client import VectorStoreClient
+from concurrent import futures
+import hashlib
+import itertools
+from datasets import load_dataset
+import threading
 
-ITEMS = [
-    # Animals
-    (1, "I love dogs."),
-    (2, "Dogs are very loyal animals."),
-    (3, "My puppy enjoys running in the park."),
-    (4, "Cats are very independent."),
-    (5, "I adopted a kitten yesterday."),
-    (6, "The dog likes to jump."),
-    (7, "The cat likes to jump."),
-    (8, "A wolf is similar to a wild dog."),
-    (9, "Lions are big cats."),
-    (10, "Birds can fly high in the sky."),
-    # Emotions / sentiment
-    (20, "I am feeling very happy today."),
-    (21, "This is the best day ever!"),
-    (22, "I feel sad and tired."),
-    (23, "Today has been a terrible day."),
-    (24, "I am extremely excited about the future."),
-    (25, "I feel depressed and lonely."),
-    # Tech
-    (30, "Python is a great programming language."),
-    (31, "I enjoy writing backend services."),
-    (32, "Distributed systems are fascinating."),
-    (33, "Vector databases are useful for AI."),
-    (34, "Machine learning powers modern applications."),
-    (35, "I like building web apps with TypeScript."),
-    # Actions
-    (40, "He runs every morning."),
-    (41, "She enjoys jogging at sunrise."),
-    (42, "They sprinted across the field."),
-    (43, "He walks slowly in the evening."),
-    (44, "She strolled through the park."),
-    (45, "They marched forward together."),
-    # Random noise (realistic data)
-    (60, "The weather is nice today."),
-    (61, "I had pizza for lunch."),
-    (62, "The movie was surprisingly good."),
-    (63, "Coffee keeps me awake."),
-    (64, "Music helps me focus."),
-]
-
-QUERIES = [
-    # Animal semantics
-    "A dog jumping over a fence",
-    "A playful puppy running outside",
-    "Big wild cats in nature",
-    "A kitten jumping in the house",
-    # Sentiment
-    "I feel extremely happy",
-    "This is the worst day of my life",
-    "I am excited and joyful",
-    "I feel very depressed",
-    # Tech semantics
-    "AI embeddings and vector databases",
-    "Backend programming and APIs",
-    "Machine learning systems",
-    "Building apps with Python",
-    # Action similarity
-    "Running very fast in the morning",
-    "Walking slowly through a park",
-    "People sprinting together",
-    # Noise / mixed intent
-    "Good weather and coffee",
-    "Watching a great movie",
-    "Relaxing with music",
-]
+NUM_ITEMS = 10_000
+NUM_QUERIES = 1000
+BATCH_SIZE = 250
 
 
-def seed_data(client: VectorStoreClient):
+def make_id(text: str) -> int:
+    return int(hashlib.md5(text.encode()).hexdigest(), 16) % (2**63 - 1)
+
+
+def load_data():
+    dataset = load_dataset("ms_marco", "v1.1", split="train")
+
+    items = []
+    queries = []
+
+    # Extract passages
+    for i, sample in enumerate(dataset):
+        if len(items) >= NUM_ITEMS:
+            break
+
+        passages = sample["passages"]["passage_text"]
+        for p in passages:
+            if p.strip():
+                items.append((make_id(p), p))
+                break  # take first valid passage
+
+    # Extract queries
+    for i, sample in enumerate(dataset):
+        if len(queries) >= NUM_QUERIES:
+            break
+
+        q = sample["query"]
+        if q.strip():
+            queries.append(q)
+
+    return items, queries
+
+
+def seed_data(client: VectorStoreClient, items):
+    counter = itertools.count(1)
+    lock = threading.Lock()
     latencies = []
-    for item_id, text in ITEMS:
+
+    def upsert_batch(batch):
         start = time.perf_counter()
-        status = client.upsert(item_id, text)
+        statuses = client.upsert_batch(batch)
         elapsed_ms = (time.perf_counter() - start) * 1000
-        latencies.append(elapsed_ms)
-        print(f"Upsert ID: {item_id} | {elapsed_ms:.2f}ms | {status}")
+
+        n = next(counter)
+        with lock:
+            print(f"Progress: {n*BATCH_SIZE}/{len(items)}")
+        return elapsed_ms
+
+    batches = [items[i : i + BATCH_SIZE] for i in range(0, len(items), BATCH_SIZE)]
+
+    with futures.ThreadPoolExecutor(max_workers=2) as executor:
+        latencies = list(executor.map(upsert_batch, batches))
 
     print(f"\nUpsert Stats")
-    print(f"Avg: {sum(latencies)/len(latencies):.2f}ms")
-    print(f"Min: {min(latencies):.2f}ms")
-    print(f"Max: {max(latencies):.2f}ms")
+    print(f"Count: {len(items)}")
+    print(f"Avg: {sum(latencies)/len(latencies):.2f}ms per batch")
+    print(f"Min: {min(latencies):.2f}ms per batch")
+    print(f"Max: {max(latencies):.2f}ms per batch")
 
 
-def run_queries(client: VectorStoreClient):
+def run_queries(client: VectorStoreClient, queries):
     latencies = []
-    for query in QUERIES:
+
+    for query in queries:
         start = time.perf_counter()
         results = client.search(query, top_k=3)
         elapsed_ms = (time.perf_counter() - start) * 1000
         latencies.append(elapsed_ms)
-        print(f"Query: {query} | {elapsed_ms:.2f}ms | {results}")
-        for text, score in results:
-            print(f"  [{score:.4f}] {text}")
 
     print(f"\nSearch Stats")
+    print(f"Count: {len(queries)}")
     print(f"Avg: {sum(latencies)/len(latencies):.2f}ms")
     print(f"Min: {min(latencies):.2f}ms")
     print(f"Max: {max(latencies):.2f}ms")
 
 
 if __name__ == "__main__":
+    print("Loading MS MARCO...")
+    ITEMS, QUERIES = load_data()
+
     with VectorStoreClient() as client:
         print("Seeding data...")
-        seed_data(client)
+        seed_data(client, ITEMS)
+
         print("\nRunning queries...")
-        run_queries(client)
+        run_queries(client, QUERIES)
