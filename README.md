@@ -9,8 +9,6 @@ A *distributed system* for storing and querying [vector embeddings](https://www.
 ```bash
 git clone https://github.com/aepii/vector-search-engine.git
 cd vector-search-engine
-git clone https://github.com/aepii/vector-search-engine.git
-cd vector-search-engine
 ```
 
 ### 2. Setup a virtual environment
@@ -81,4 +79,3 @@ $env:SERVER_HOST=50053; python -m server
 ```bash
 python -m benchmarks.benchmark
 ```
-
