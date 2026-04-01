@@ -1,6 +1,6 @@
-# Distributed Crash-Fault-Tolerant Vector Search Engine
+# Distributed Vector Search Engine
 
-A *distributed system* for storing and querying [vector embeddings](https://www.pinecone.io/learn/vector-database/). This project implements a consistent, replicated vector index using the [**Raft Consensus Algorithm**](https://raft.github.io/raft.pdf).
+A *distributed system* for storing and querying [vector embeddings](https://www.pinecone.io/learn/vector-database/). This project implements a partitioned vector index utilizing a coordinator-worker architecture.
 
 ## Setup and Installation
 ### 1. Clone the repository:
