@@ -22,4 +22,5 @@ __pycache__/
 .pytest_cache
 
 # Scratch space at project root (not for committed work)
-/scratch/
+/scratch/*
+!/scratch/.gitkeep
