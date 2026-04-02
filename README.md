@@ -2,6 +2,28 @@
 
 A *distributed system* for storing and querying [vector embeddings](https://www.pinecone.io/learn/vector-database/). This project implements a partitioned vector index utilizing a coordinator-worker architecture.
 
+## Architecture
+
+```text
+Client
+  └─► Coordinator (port 50050)  — hash-routes writes, fans out reads
+          ├─► Shard 0 (port 50051)
+          ├─► Shard 1 (port 50052)
+          └─► Shard 2 (port 50053)
+```
+
+Writes (`Upsert`, `UpsertBatch`) are routed to a single shard via a consistent hash ring (SHA-256, 150 virtual nodes per host). Reads (`Search`) broadcast to all shards in parallel and merge results by score.
+
+The coordinator also exposes a `CoordinatorControl` service on port 50050 for registering and deregistering shards at runtime without restarting the coordinator:
+
+```bash
+# Example: register a new shard dynamically (via grpcurl or a client script)
+RegisterNode  { host: "localhost:50054" }
+DeregisterNode { host: "localhost:50054" }
+```
+
+The initial shard set is configured via the `SHARD_HOSTS` environment variable.
+
 ## Setup and Installation
 
 ### 1. Clone the repository
