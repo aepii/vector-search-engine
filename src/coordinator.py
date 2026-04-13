@@ -59,20 +59,36 @@ class CoordinatorServicer(vector_store_pb2_grpc.VectorStoreServicer):
     def Upsert(self, request, context):
         trace_id = request.trace_id
         item = request.item
-        host, stub = self._route(item.id)
-
-        logger.info(f"[{trace_id}] [Upsert] id={item.id} -> {host}")
 
         embedding = self._embedding_model.encode(item.text).tolist()
         encoded_request = vector_store_pb2.UpsertRequest(
             item=vector_store_pb2.UpsertItem(id=item.id, text=item.text, embedding=embedding),
             trace_id=trace_id,
         )
-        response = stub.Upsert(encoded_request)
 
-        logger.info(f"[{trace_id}] [Upsert] id={item.id} complete: {response.status}")
+        with self._lock:
+            stub_snapshot = list(self._stub_map.items())
 
-        return vector_store_pb2.UpsertResponse(status=f"[{host}] {response.status}")
+        logger.info(f"[{trace_id}] [Upsert] id={item.id} -> {len(stub_snapshot)} shards")
+
+        def write_shard(host_and_stub):
+            host, stub = host_and_stub
+            try:
+                response = stub.Upsert(encoded_request)
+                logger.info(f"[{trace_id}] [Upsert] id={item.id} -> {host}: {response.status}")
+                return response.status
+            except grpc.RpcError as e:
+                logger.error(f"[{trace_id}] [Upsert] id={item.id} -> {host} failed: {e.details()}")
+                return None
+
+        statuses = []
+        with futures.ThreadPoolExecutor(max_workers=max(len(stub_snapshot), 1)) as executor:
+            for status in executor.map(write_shard, stub_snapshot):
+                if status is not None:
+                    statuses.append(status)
+
+        logger.info(f"[{trace_id}] [Upsert] id={item.id} complete: {len(statuses)}/{len(stub_snapshot)} shards confirmed")
+        return vector_store_pb2.UpsertResponse(status=f"replicated to {len(statuses)}/{len(stub_snapshot)} shards")
 
     def UpsertBatch(self, request, context):
         trace_id = request.trace_id
@@ -82,38 +98,36 @@ class CoordinatorServicer(vector_store_pb2_grpc.VectorStoreServicer):
         texts = [item.text for item in request.items]
         embeddings = self._embedding_model.encode(texts)
 
-        shard_batches: dict[str, list] = {}
-        for item, embedding in zip(request.items, embeddings):
-            host, _ = self._route(item.id)
-            logger.info(f"[{trace_id}] item id={item.id} -> {host}")
-            encoded_item = vector_store_pb2.UpsertItem(
-                id=item.id, text=item.text, embedding=embedding.tolist()
-            )
-            shard_batches.setdefault(host, []).append(encoded_item)
+        encoded_items = [
+            vector_store_pb2.UpsertItem(id=item.id, text=item.text, embedding=embedding.tolist())
+            for item, embedding in zip(request.items, embeddings)
+        ]
+        batch_request = vector_store_pb2.UpsertBatchRequest(items=encoded_items, trace_id=trace_id)
 
-        responses = []
-        for host, batch in shard_batches.items():
-            with self._lock:
-                stub = self._stub_map.get(host)
-            if stub is None:
-                logger.warning(f"[{trace_id}] skipping {host}: not in stub map")
-                continue
+        with self._lock:
+            stub_snapshot = list(self._stub_map.items())
 
-            logger.info(f"[{trace_id}] sending {len(batch)} items to {host}")
+        logger.info(f"[{trace_id}] [UpsertBatch] fanning out to {len(stub_snapshot)} shards")
 
-            batch_request = vector_store_pb2.UpsertBatchRequest(items=batch, trace_id=trace_id)
+        def write_shard(host_and_stub):
+            host, stub = host_and_stub
+            try:
+                start = time.perf_counter()
+                response = stub.UpsertBatch(batch_request)
+                elapsed = (time.perf_counter() - start) * 1000
+                logger.info(f"[{trace_id}] {host} batch complete in {elapsed:.2f}ms")
+                return list(response.statuses)
+            except grpc.RpcError as e:
+                logger.error(f"[{trace_id}] {host} batch failed: {e.details()}")
+                return []
 
-            start = time.perf_counter()
-            response = stub.UpsertBatch(batch_request)
-            elapsed = (time.perf_counter() - start) * 1000
+        all_statuses = []
+        with futures.ThreadPoolExecutor(max_workers=max(len(stub_snapshot), 1)) as executor:
+            for statuses in executor.map(write_shard, stub_snapshot):
+                all_statuses.extend(statuses)
 
-            logger.info(f"[{trace_id}] {host} batch complete in {elapsed:.2f}ms")
-
-            responses.extend(response.statuses)
-
-        logger.info(f"[{trace_id}] [UpsertBatch] done, {len(responses)} total statuses")
-
-        return vector_store_pb2.UpsertBatchResponse(statuses=responses)
+        logger.info(f"[{trace_id}] [UpsertBatch] done, {len(all_statuses)} total statuses")
+        return vector_store_pb2.UpsertBatchResponse(statuses=all_statuses)
 
     def Search(self, request, context):
         trace_id = request.trace_id
