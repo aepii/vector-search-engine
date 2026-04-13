@@ -3,12 +3,14 @@ import grpc
 from concurrent import futures
 import vector_store_pb2, vector_store_pb2_grpc
 from classes.vector_service import VectorService
+from classes.vector_store import VectorStore
 from utils.logger import get_logger
 from dotenv import load_dotenv
 
 load_dotenv()
 
 SERVER_PORT = os.getenv("SERVER_PORT", "50051")
+DB_PATH = os.getenv("DB_PATH", f"./data/shard_{SERVER_PORT}.db")
 
 logger = get_logger(f"SHARD:{SERVER_PORT}")
 
@@ -17,7 +19,15 @@ class VectorStoreServicer(vector_store_pb2_grpc.VectorStoreServicer):
     """gRPC servicer implementation for the VectorStore service."""
 
     def __init__(self):
-        self.service = VectorService()
+        # dirname returns "" if DB_PATH is a bare filename (e.g. DB_PATH=shard.db),
+        # in which case the empty string "" is passed to os.makedirs
+        # calling os.makedirs("") raises an error
+        # this check prevents the error
+        # probably not necessary, but safe
+        dir_name = os.path.dirname(DB_PATH)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
+        self.service = VectorService(VectorStore(DB_PATH))
 
     def Upsert(self, request, context):
         """
@@ -49,7 +59,7 @@ class VectorStoreServicer(vector_store_pb2_grpc.VectorStoreServicer):
         return vector_store_pb2.UpsertBatchResponse(statuses=statuses)
 
     def Count(self, request, context):
-        count = len(self.service.vector_store.store)
+        count = self.service.vector_store.count()
         return vector_store_pb2.CountResponse(count=count)
 
     def Search(self, request, context):
