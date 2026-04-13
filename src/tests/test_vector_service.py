@@ -15,29 +15,30 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from classes.vector_service import VectorService
+from classes.vector_store import VectorStore
+
+
+def make_service(dim=384):
+    return VectorService(VectorStore(dim=dim))
 
 
 def test_add_item_stores_and_retrieves():
     """add_item accepts a pre-computed embedding; search returns the stored text."""
-    service = VectorService()
+    service = make_service()
     embedding = np.random.rand(384).tolist()
     service.add_item(1, "hello world", embedding)
-    assert service.vector_store.metadata[1] == "hello world"
-    assert service.vector_store.store[1].shape == (384,)
+    results = service.search(embedding, top_k=1)
+    assert results[0][0] == "hello world"
 
 
 def test_search_returns_closest_vector():
     """search ranks the most similar vector first."""
-    service = VectorService()
-    dim = 4
-    # item 1: unit vector along first axis
+    service = make_service(dim=4)
     e1 = [1.0, 0.0, 0.0, 0.0]
-    # item 2: unit vector along second axis (orthogonal to e1)
     e2 = [0.0, 1.0, 0.0, 0.0]
     service.add_item(1, "item one", e1)
     service.add_item(2, "item two", e2)
 
-    # query is close to item 1
     query = [0.9, 0.1, 0.0, 0.0]
     results = service.search(query, top_k=2)
 
@@ -47,23 +48,24 @@ def test_search_returns_closest_vector():
 
 
 def test_add_items_batch_stores_all():
-    """add_items_batch stores all items correctly."""
-    service = VectorService()
+    """add_items_batch stores all items; each text is retrievable via search."""
+    service = make_service(dim=4)
+    # Use orthogonal unit vectors so each item is its own nearest neighbour.
     items = [
-        (10, "alpha", np.random.rand(384).tolist()),
-        (20, "beta", np.random.rand(384).tolist()),
-        (30, "gamma", np.random.rand(384).tolist()),
+        (10, "alpha", [1.0, 0.0, 0.0, 0.0]),
+        (20, "beta",  [0.0, 1.0, 0.0, 0.0]),
+        (30, "gamma", [0.0, 0.0, 1.0, 0.0]),
     ]
     service.add_items_batch(items)
-    assert len(service.vector_store.store) == 3
-    assert service.vector_store.metadata[10] == "alpha"
-    assert service.vector_store.metadata[20] == "beta"
-    assert service.vector_store.metadata[30] == "gamma"
+    assert service.vector_store.count() == 3
+    assert service.search([1.0, 0.0, 0.0, 0.0], top_k=1)[0][0] == "alpha"
+    assert service.search([0.0, 1.0, 0.0, 0.0], top_k=1)[0][0] == "beta"
+    assert service.search([0.0, 0.0, 1.0, 0.0], top_k=1)[0][0] == "gamma"
 
 
 def test_search_top_k_limits_results():
     """search respects the top_k parameter."""
-    service = VectorService()
+    service = make_service()
     for i in range(10):
         service.add_item(i, f"item {i}", np.random.rand(384).tolist())
 
