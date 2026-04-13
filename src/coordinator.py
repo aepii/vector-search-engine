@@ -26,9 +26,10 @@ class CoordinatorServicer(vector_store_pb2_grpc.VectorStoreServicer):
     gRPC servicer for the VectorStore service, running on the coordinator.
 
     Encodes all text and queries via a single EmbeddingModel instance before
-    forwarding pre-computed vectors to shards. Writes are routed to a single
-    shard via a consistent hash ring; searches fan out to all registered shards
-    in parallel and the results are merged and re-ranked before returning.
+    forwarding pre-computed vectors to shards. Writes fan out to N clockwise
+    ring successors (REPLICATION_FACTOR env var; default 0 = all nodes). Searches
+    fan out to all registered shards in parallel; results are merged, deduplicated
+    by text, and re-ranked before returning.
     """
 
     def __init__(self, shard_hosts: list[str], replication_factor: int = 0):
@@ -252,10 +253,10 @@ class CoordinatorControlServicer(vector_store_pb2_grpc.CoordinatorControlService
             del self._c._stub_map[host]
             count = len(self._c._stub_map)
 
-        # NOTE: no data migration. Historical writes on the deregistered node
-        # stay there; Search still reaches them if the process is running.
-        # New writes for keys that mapped to this node now go to the next
-        # clockwise node on the ring.
+        # NOTE: no data migration. Data on the deregistered node's disk stays
+        # there, but the node is removed from stub_map so Search will no longer
+        # query it. Under full replication this is fine — all remaining shards
+        # hold the same data. New writes route to the next clockwise node.
         logger.info(f"[DeregisterNode] {host} removed (ring size={count})")
         return vector_store_pb2.NodeResponse(
             success=True, message=f"{host} removed", node_count=count
