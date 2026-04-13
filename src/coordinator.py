@@ -110,7 +110,9 @@ class CoordinatorServicer(vector_store_pb2_grpc.VectorStoreServicer):
         logger.info(f"[{trace_id}] [UpsertBatch] received size={len(request.items)}")
 
         texts = [item.text for item in request.items]
+        t_enc = time.perf_counter()
         embeddings = self._embedding_model.encode(texts)
+        enc_ms = (time.perf_counter() - t_enc) * 1000
 
         # Route each item to its replica set and group into per-shard batches.
         # With full replication every item lands on every shard; with N < total,
@@ -125,7 +127,7 @@ class CoordinatorServicer(vector_store_pb2_grpc.VectorStoreServicer):
                 shard_batches.setdefault(host, []).append(encoded_item)
                 shard_stubs[host] = stub
 
-        logger.info(f"[{trace_id}] [UpsertBatch] routing to {len(shard_batches)} shards")
+        logger.info(f"[{trace_id}] [UpsertBatch] encoded in {enc_ms:.0f}ms, routing to {len(shard_batches)} shards")
 
         def write_shard(host):
             stub = shard_stubs[host]
@@ -147,7 +149,7 @@ class CoordinatorServicer(vector_store_pb2_grpc.VectorStoreServicer):
             for statuses in executor.map(write_shard, shard_batches):
                 all_statuses.extend(statuses)
 
-        logger.info(f"[{trace_id}] [UpsertBatch] done, {len(all_statuses)} total statuses")
+        logger.info(f"[{trace_id}] [UpsertBatch] done: {len(request.items)} items x {len(shard_batches)} shards ({len(all_statuses)} acks)")
         return vector_store_pb2.UpsertBatchResponse(statuses=all_statuses)
 
     def Search(self, request, context):
