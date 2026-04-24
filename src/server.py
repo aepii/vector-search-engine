@@ -92,6 +92,10 @@ class VectorStoreServicer(vector_store_pb2_grpc.VectorStoreServicer):
 
 
 def _heartbeat_loop():
+    # Sends a heartbeat to the coordinator every HEARTBEAT_INTERVAL_S seconds.
+    # The first successful beat registers this shard; subsequent beats keep it
+    # in the coordinator's routing table. Failures warn but do not crash — the
+    # coordinator may not be up yet, or may restart; the loop retries automatically.
     channel = grpc.insecure_channel(COORDINATOR_HOST)
     stub = vector_store_pb2_grpc.CoordinatorControlStub(channel)
     request = vector_store_pb2.HeartbeatRequest(host=SHARD_HOST)
