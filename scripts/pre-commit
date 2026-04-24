@@ -3,7 +3,16 @@
 # Install once per clone: ln -s ../../scripts/pre-commit .git/hooks/pre-commit
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(git rev-parse --show-toplevel)"
+
+# Use the venv Python if present; fall back to system Python.
+if [ -f ".venv/Scripts/python" ]; then
+    PYTHON=".venv/Scripts/python"
+elif [ -f ".venv/bin/python" ]; then
+    PYTHON=".venv/bin/python"
+else
+    PYTHON="python"
+fi
 
 PROTO_FILE="protos/vector_store.proto"
 CHANGED=$(git diff --cached --name-only)
@@ -16,7 +25,7 @@ fi
 TMPDIR=$(mktemp -d)
 trap "rm -rf $TMPDIR" EXIT
 
-python -m grpc_tools.protoc \
+$PYTHON -m grpc_tools.protoc \
     -I protos \
     --python_out="$TMPDIR" \
     --grpc_python_out="$TMPDIR" \
