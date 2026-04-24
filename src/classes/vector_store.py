@@ -120,7 +120,12 @@ class VectorStore:
         return row[0]
 
     def scan(self) -> list[tuple[int, str, list[float]]]:
-        """Returns all stored items as (id, text, embedding) tuples."""
+        """Returns all stored items as (id, text, embedding) tuples.
+
+        Fetches all rows into memory in one query (lock held only for the fetch),
+        then unpacks the float blobs outside the lock. Acceptable for the current
+        dataset sizes; revisit if memory pressure becomes a concern at scale.
+        """
         with self._lock:
             rows = self.conn.execute(
                 "SELECT i.id, i.text, v.embedding "
