@@ -42,7 +42,7 @@ class CoordinatorServicer(vector_store_pb2_grpc.VectorStoreServicer):
         self._lock = threading.RLock()
         self._ring = ConsistentHashRing(virtual_nodes=150)
         self._stub_map: dict[str, vector_store_pb2_grpc.VectorStoreStub] = {}
-        self._last_seen: dict[str, float] = {}
+        self._last_seen: dict[str, float] = {}  # host -> unix timestamp of last heartbeat
         self._embedding_model = EmbeddingModel()
         self._replication_factor = replication_factor
         self._heartbeat_interval = heartbeat_interval
@@ -57,6 +57,7 @@ class CoordinatorServicer(vector_store_pb2_grpc.VectorStoreServicer):
         logger.info(f"Coordinator ready - {len(self._stub_map)} shards: {list(self._stub_map)}")
 
     def _sweep_loop(self) -> None:
+        """Periodically deregister shards that have stopped sending heartbeats."""
         while True:
             time.sleep(self._heartbeat_interval)
             now = time.time()
@@ -240,8 +241,10 @@ class CoordinatorControlServicer(vector_store_pb2_grpc.CoordinatorControlService
     """
     gRPC servicer for the CoordinatorControl service.
 
-    Handles runtime node registration and deregistration by mutating the
-    CoordinatorServicer's hash ring and stub map.
+    Handles heartbeats, runtime node registration, and deregistration by mutating
+    the CoordinatorServicer's hash ring and stub map. Under normal operation shards
+    register implicitly via their first Heartbeat — RegisterNode is retained for
+    manual bootstrapping only.
     """
 
     def __init__(self, coordinator: CoordinatorServicer):
@@ -275,6 +278,8 @@ class CoordinatorControlServicer(vector_store_pb2_grpc.CoordinatorControlService
             self._c._last_seen[host] = time.time()
             was_registered = host in self._c._stub_map
             if not was_registered:
+                # Handles both initial registration and re-registration after
+                # the sweep has deregistered a shard that was temporarily unreachable.
                 self._c._add_node_locked(host)
                 logger.info(f"[Heartbeat] {host} registered via heartbeat (total nodes: {len(self._c._stub_map)})")
 
