@@ -12,17 +12,17 @@ Client
           └─► Shard 2 (port 50053)
 ```
 
-Writes (`Upsert`, `UpsertBatch`) are routed to a single shard via a consistent hash ring (SHA-256, 150 virtual nodes per host). Reads (`Search`) broadcast to all shards in parallel and merge results by score.
+Writes (`Upsert`, `UpsertBatch`) are routed via a consistent hash ring (SHA-256, 150 virtual nodes per host) to the next N clockwise physical nodes, where N is configurable via `REPLICATION_FACTOR` (default `0` = all nodes). At small scale this gives full replication — every shard holds every vector. Reads (`Search`) broadcast to all shards in parallel, merge results by score, and deduplicate before returning.
 
-The coordinator also exposes a `CoordinatorControl` service on port 50050 for registering and deregistering shards at runtime without restarting the coordinator:
+Shards self-register by sending periodic heartbeats to the coordinator. The coordinator tracks liveness via a background sweep and automatically removes shards that stop responding. Startup order does not matter — shards can come up before or after the coordinator and will register on their first successful heartbeat.
+
+The coordinator also exposes a `CoordinatorControl` service on port 50050 for manual registration and deregistration if needed:
 
 ```bash
-# Example: register a new shard dynamically (via grpcurl or a client script)
-RegisterNode  { host: "localhost:50054" }
+# Example: manually register or deregister a shard (via grpcurl or a client script)
+RegisterNode   { host: "localhost:50054" }
 DeregisterNode { host: "localhost:50054" }
 ```
-
-The initial shard set is configured via the `SHARD_HOSTS` environment variable.
 
 ## Setup and Installation
 

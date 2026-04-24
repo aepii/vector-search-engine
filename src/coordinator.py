@@ -11,12 +11,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SHARD_HOSTS = os.getenv(
-    "SHARD_HOSTS", "localhost:50051,localhost:50052,localhost:50053"
-).split(",")
+SHARD_HOSTS = os.getenv("SHARD_HOSTS", "").split(",")
 COORDINATOR_PORT = os.getenv("COORDINATOR_PORT", "50050")
 # Number of shards that store each item. 0 means all registered nodes (full replication).
 REPLICATION_FACTOR = int(os.getenv("REPLICATION_FACTOR", "0"))
+HEARTBEAT_INTERVAL_S = int(os.getenv("HEARTBEAT_INTERVAL_S", "5"))
+HEARTBEAT_TIMEOUT_S = int(os.getenv("HEARTBEAT_TIMEOUT_S", "15"))
 
 logger = get_logger("COORDINATOR")
 
@@ -32,18 +32,44 @@ class CoordinatorServicer(vector_store_pb2_grpc.VectorStoreServicer):
     by text, and re-ranked before returning.
     """
 
-    def __init__(self, shard_hosts: list[str], replication_factor: int = 0):
+    def __init__(
+        self,
+        shard_hosts: list[str],
+        replication_factor: int = 0,
+        heartbeat_interval: int = HEARTBEAT_INTERVAL_S,
+        heartbeat_timeout: int = HEARTBEAT_TIMEOUT_S,
+    ):
         self._lock = threading.RLock()
         self._ring = ConsistentHashRing(virtual_nodes=150)
         self._stub_map: dict[str, vector_store_pb2_grpc.VectorStoreStub] = {}
+        self._last_seen: dict[str, float] = {}  # host -> unix timestamp of last heartbeat
         self._embedding_model = EmbeddingModel()
-        # 0 means replicate to all registered nodes.
         self._replication_factor = replication_factor
+        self._heartbeat_interval = heartbeat_interval
+        self._heartbeat_timeout = heartbeat_timeout
 
         for host in (h.strip() for h in shard_hosts if h.strip()):
             self._add_node_locked(host)
 
+        sweep = threading.Thread(target=self._sweep_loop, daemon=True)
+        sweep.start()
+
         logger.info(f"Coordinator ready - {len(self._stub_map)} shards: {list(self._stub_map)}")
+
+    def _sweep_loop(self) -> None:
+        """Periodically deregister shards that have stopped sending heartbeats."""
+        while True:
+            time.sleep(self._heartbeat_interval)
+            now = time.time()
+            with self._lock:
+                stale = [
+                    host for host, ts in self._last_seen.items()
+                    if now - ts > self._heartbeat_timeout and host in self._stub_map
+                ]
+                for host in stale:
+                    self._ring.remove_node(host)
+                    del self._stub_map[host]
+                    logger.warning(f"[Health] {host} timed out, deregistered (ring size={len(self._stub_map)})")
 
     def _add_node_locked(self, host: str) -> None:
         """Must be called with self._lock held (or during __init__)."""
@@ -215,8 +241,10 @@ class CoordinatorControlServicer(vector_store_pb2_grpc.CoordinatorControlService
     """
     gRPC servicer for the CoordinatorControl service.
 
-    Handles runtime node registration and deregistration by mutating the
-    CoordinatorServicer's hash ring and stub map.
+    Handles heartbeats, runtime node registration, and deregistration by mutating
+    the CoordinatorServicer's hash ring and stub map. Under normal operation shards
+    register implicitly via their first Heartbeat — RegisterNode is retained for
+    manual bootstrapping only.
     """
 
     def __init__(self, coordinator: CoordinatorServicer):
@@ -238,6 +266,24 @@ class CoordinatorControlServicer(vector_store_pb2_grpc.CoordinatorControlService
         msg = f"{'already registered' if already else 'registered'}: {host}"
         logger.info(f"[RegisterNode] {msg} (total nodes: {count})")
         return vector_store_pb2.NodeResponse(success=True, message=msg, node_count=count)
+
+    def Heartbeat(self, request, context):
+        host = request.host.strip()
+        if not host:
+            context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
+            context.set_details("host must not be empty")
+            return vector_store_pb2.HeartbeatResponse(registered=False)
+
+        with self._c._lock:
+            self._c._last_seen[host] = time.time()
+            was_registered = host in self._c._stub_map
+            if not was_registered:
+                # Handles both initial registration and re-registration after
+                # the sweep has deregistered a shard that was temporarily unreachable.
+                self._c._add_node_locked(host)
+                logger.info(f"[Heartbeat] {host} registered via heartbeat (total nodes: {len(self._c._stub_map)})")
+
+        return vector_store_pb2.HeartbeatResponse(registered=True)
 
     def DeregisterNode(self, request, context):
         host = request.host.strip()
