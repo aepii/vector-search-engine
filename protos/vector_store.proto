@@ -62,6 +62,16 @@ message CountResponse { int32 count = 1; }
 service CoordinatorControl {
   rpc RegisterNode(NodeRequest) returns (NodeResponse);
   rpc DeregisterNode(NodeRequest) returns (NodeResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+}
+
+// -- Heartbeat --
+message HeartbeatRequest {
+  string host = 1;
+}
+
+message HeartbeatResponse {
+  bool registered = 1;
 }
 
 message NodeRequest {
