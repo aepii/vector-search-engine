@@ -118,3 +118,15 @@ class VectorStore:
         with self._lock:
             row = self.conn.execute("SELECT COUNT(*) FROM items").fetchone()
         return row[0]
+
+    def scan(self) -> list[tuple[int, str, list[float]]]:
+        """Returns all stored items as (id, text, embedding) tuples."""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT i.id, i.text, v.embedding "
+                "FROM items i JOIN vec_items v ON v.rowid = i.id"
+            ).fetchall()
+        return [
+            (item_id, text, list(struct.unpack(f"{self.dim}f", emb_packed)))
+            for item_id, text, emb_packed in rows
+        ]
